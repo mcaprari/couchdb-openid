@@ -33,7 +33,6 @@ openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->
 	end.
 	
 handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
-	io:format("AUTH-REQUEST ~p~n", [MochiReq:get()]),
 	case proplists:get_value("openid-identifier", Params) of
 		undefined ->
 			boom;
