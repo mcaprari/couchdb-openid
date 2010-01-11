@@ -23,7 +23,9 @@
 %		if it's ok install a cookie and return user_ctx
 %	/_session ->
 %		if cookie is verified, return json user_ctx
-%		otherwise return Req (or empty user_ctx?)
+%		otherwise return Req (or should add user_ctx to the headers?)
+%	any other url ->
+%		Req (or should add user_ctx to the headers?)
 
 openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->	
 	{Path, _Query, []} = mochiweb_util:urlsplit_path(MochiReq:get(raw_path)),
