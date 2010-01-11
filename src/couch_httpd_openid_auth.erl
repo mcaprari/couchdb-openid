@@ -6,7 +6,7 @@
 %
 % Unless required by applicable law or agreed to in writing, software
 % distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-% WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
+% WARRANTIES77 OR CONDITIONS OF ANY KIND, either express or implied.  See the
 % License for the specific language governing permissions and limitations under
 % the License.
 
@@ -32,16 +32,16 @@ openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->
 			Req
 	end.
 	
-handle_openid_auth_request(Req, Params) ->
-	io:format("AUTH-REQUEST~n"),
+handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
+	io:format("AUTH-REQUEST ~p~n", [MochiReq:get()]),
 	case proplists:get_value("openid-identifier", Params) of
 		undefined ->
 			boom;
 		Identifier ->
 			openid_v1_redirect(Req, Identifier)
-	end;
+		end.
 	
-handle_openid_request(Req, Params) ->
+handle_openid_auth_confirm(Req, Params) ->
 	io:format("AUTH-CONFIRM parms: ~p~n", [Params]),
 	case proplists:get_value("openid-identifier", Params) of
 		undefined ->
@@ -53,9 +53,10 @@ handle_openid_request(Req, Params) ->
 		
 openid_v1_redirect(Req, Identifier) ->
 	application:start(eopenid),
+	
 	Conf = eopenid_lib:foldf(
-		[eopenid_lib:in("openid.return_to", "http://localhost:5984/_session?openid=auth-confirm"),
-		eopenid_lib:in("openid.trust_root", "http://localhost:5984")
+		[eopenid_lib:in("openid.return_to", couch_httpd:absolute_uri(Req, "/_session?openid=auth-confirm")),
+		eopenid_lib:in("openid.trust_root", couch_httpd:absolute_uri(Req, "/"))
 	], eopenid_lib:new()),
 	{ok, Discover} = eopenid_v1:discover(Identifier, Conf),
 	{ok, Associate} = eopenid_v1:associate(Discover),
@@ -76,4 +77,4 @@ ets_maybe_new(Table) ->
 			ets:new(Table, [set, named_table]);
 		Info ->
 			Table
-	end
+	end.
