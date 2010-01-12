@@ -16,13 +16,11 @@
 -export([openid_authentication_handler/1]).
 
 openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->	
-	io:format("OPENID_AUTHENTICATION_HANDLER~n"),
 	{Path, _Query, []} = mochiweb_util:urlsplit_path(MochiReq:get(raw_path)),
 	case Path of  
 		"/_session" ->
 			Params = MochiReq:parse_qs(),
 			AuthSession = MochiReq:get_cookie_value("AuthSession"),
-			io:format("Request ~p~n~p~n", [Params, AuthSession]),
 			case proplists:get_value("openid", Params) of								
 				"auth-request" ->
 					handle_openid_auth_request(Req, Params);				
@@ -45,7 +43,6 @@ user_ctx(ClaimedId, UserDoc) ->
 	]}.
 	
 handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
-	io:format("AUTH-REQUEST parms: ~p~n", [Params]),
 	case proplists:get_value("openid-identifier", Params) of
 		undefined ->
 			couch_httpd:send_error(Req, 400, [], <<"openid-auth-request">>, <<"with openid=auth-requests MUST provide openid-identifier=identifier">>);
@@ -57,7 +54,6 @@ handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
 % http://localhost:5984/_session?openid=auth-request&openid-identifier=caprazzi.net
 
 handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
-	io:format("AUTH-CONFIRM parms: ~p~n", [Params]),
 	case proplists:get_value("openid.assoc_handle", Params) of
 		undefined ->
 			couch_httpd:send_error(Req, 400, [], <<"openid-auth-confirm">>, <<"with openid=auth-confirm MUST provide openid.assoc_handle">>);
@@ -65,8 +61,6 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
 			AssociateDict = get_associate_dict(AssocHandle),
 			case eopenid_v1:verify_signed_keys(MochiReq:get(raw_path), AssociateDict) of
 				true ->
-					io:format("Verified ~p~n", [AssociateDict]),
-					% create user
 					OpenId = eopenid_lib:out("openid.claimed_id", AssociateDict),
 					{ok, UserDoc} = get_or_create_user_doc(OpenId),
 					Secret = couch_config:get("couch_httpd_auth", "secret"),
@@ -111,7 +105,6 @@ find_user_by_openid(Db, OpenId) ->
 	%% ... or not
 	% create_user_doc(OpenId).
 	DocId = ?l2b("org.couchdb.user:" ++ OpenId),
-	io:format("find ~p ~p~n", [OpenId, DocId]),
 	case couch_db:open_doc(Db, DocId) of
 		{ok, Doc} ->
 			{ok, Doc};
@@ -140,13 +133,11 @@ openid_v1_redirect(Req, Identifier) ->
 	{ok, Associate} = eopenid_v1:associate(Discover),
 	{ok, Url} = eopenid_v1:checkid_setup(Associate),
 	ok = store_associate_dict(Associate),
-	io:format("Identifier: ~p~nDiscover: ~p~nAssociate: ~p~n Url: ~p~n",[Identifier, Discover, Associate, Url]),
 	Headers = [{"Location", Url}] ++ cache_busting_headers(),
 	couch_httpd:send_response(Req, 301, Headers, <<>>).
 
 store_associate_dict(Associate) ->
 	Handle = proplists:get_value("openid.assoc_handle", Associate),
-	io:format("storing ~p for ~p~n", [Handle, Associate]),
 	true = ets:insert(ets_maybe_new(openid_associations),
 		{{assoc_handle, Handle}, Associate}),
 	ok.
