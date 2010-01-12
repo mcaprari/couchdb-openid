@@ -27,11 +27,13 @@
 %	any other url ->
 %		Req (or should add user_ctx to the headers?)
 
+%% TODO: add no cache!
 openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->	
 	{Path, _Query, []} = mochiweb_util:urlsplit_path(MochiReq:get(raw_path)),
 	case Path of  
 		"/_session" ->
 			Params = MochiReq:parse_qs(),
+			io:format("Request ~p~n", [Params]),
 			case proplists:get_value("openid", Params) of								
 				"auth-request" ->
 					handle_openid_auth_request(Req, Params);				
@@ -69,6 +71,7 @@ verify_openid_cookie(#httpd{mochi_req=MochiReq}=Req) ->
 		end.
 	
 handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
+	io:format("AUTH-REQUEST parms: ~p~n", [Params]),
 	case proplists:get_value("openid-identifier", Params) of
 		undefined ->
 			couch_httpd:send_error(Req, 400, [], <<"openid-auth-request">>, <<"with openid=auth-requests MUST provide openid-identifier=identifier">>);
@@ -77,6 +80,7 @@ handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
 	end.
 		
 % http://www.dikappa.net:5984/_session?openid=auth-request&openid-identifier=caprazzi.net	
+% http://localhost:5984/_session?openid=auth-request&openid-identifier=caprazzi.net
 handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
 	io:format("AUTH-CONFIRM parms: ~p~n", [Params]),
 	case proplists:get_value("openid.assoc_handle", Params) of
@@ -87,14 +91,44 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
 			case eopenid_v1:verify_signed_keys(MochiReq:get(raw_path), AssociateDict) of
 				true ->
 					io:format("Verified ~p~n", [AssociateDict]),
-					ClaimedId = eopenid_lib:out("openid.claimed_id", AssociateDict),
+					% create user
+					OpenId = eopenid_lib:out("openid.claimed_id", AssociateDict),
+					Created = create_or_update_user_doc(OpenId),
+					io:format("Created doc: ~p~n",[Created]),
 					Cookie = cookie_auth(Req, AssocHandle),						
-					couch_httpd:send_json(Req, 200, [Cookie], user_ctx(ClaimedId));
+					couch_httpd:send_json(Req, 200, [Cookie], user_ctx(OpenId));
 				false ->
 					io:format("Not Verified ~p~n", [AssociateDict]),
 					boom
 			end
 	end.
+
+cache_busting_headers() ->
+	[
+        {"Date", httpd_util:rfc1123_date()},
+        {"Cache-Control", "no-cache"},
+        % Past date, ON PURPOSE!
+        {"Expires", "Fri, 01 Jan 1990 00:00:00 GMT"},
+        {"Pragma", "no-cache"}
+	].
+
+create_or_update_user_doc(OpenId) ->
+	DbName = ?l2b(couch_config:get("couch_httpd_auth", "authentication_db")),
+	{ok, Db} = couch_db:open(DbName, [{user_ctx, #user_ctx{roles=[<<"_admin">>]}}]),
+	Doc = create_user_doc(OpenId),
+	couch_db:update_doc(Db, Doc, [full_commit]).
+	
+create_user_doc(OpenId) ->
+	DocId = ?l2b("org.couchdb.user:" ++ OpenId),
+	couch_doc:from_json_obj({[
+		{<<"_id">>, DocId},
+		{<<"type">>,<<"user">>},
+		{<<"username">>, ?l2b(OpenId)},
+		{<<"roles">>, []},
+		{<<"openid">>,[?l2b(OpenId)]}
+	]})
+	
+	.
 	
 cookie_auth(#httpd{mochi_req=MochiReq}=Req, AssocHandle) ->	
 	mochiweb_cookies:cookie("OpenidAuthSession", couch_util:encodeBase64Url(AssocHandle), [{path, "/"}, {http_only, true}]).
@@ -111,12 +145,14 @@ openid_v1_redirect(Req, Identifier) ->
 	{ok, Url} = eopenid_v1:checkid_setup(Associate),
 	ok = store_associate_dict(Associate),
 	io:format("Identifier: ~p~nDiscover: ~p~nAssociate: ~p~n Url: ~p~n",[Identifier, Discover, Associate, Url]),
-	Headers = [{"Location", Url}],
+	Headers = [{"Location", Url}] ++ cache_busting_headers(),
 	couch_httpd:send_response(Req, 301, Headers, <<>>).
 
 store_associate_dict(Associate) ->
+	Handle = proplists:get_value("openid.assoc_handle", Associate),
+	io:format("storing ~p for ~p~n", [Handle, Associate]),
 	true = ets:insert(ets_maybe_new(openid_associations),
-		{{assoc_handle, proplists:get_value("openid.assoc_handle", Associate)}, Associate}),
+		{{assoc_handle, Handle}, Associate}),
 	ok.
 
 get_associate_dict(AssocHandle) ->

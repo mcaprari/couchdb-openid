@@ -3,7 +3,7 @@
 
 -ifdef(debug).
 -define(edbg(Fmt,Args), 
-        error_logger:format("~p(~p): "++Fmt, [?MODULE,?LINE|Args])).
+		nil).
 -else.
 -define(edbg(Fmt,Args), true).
 -endif.
