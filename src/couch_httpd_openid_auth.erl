@@ -15,60 +15,34 @@
 
 -export([openid_authentication_handler/1]).
 
-%	/_session?openid=auth-request&openid-identifier=<identifier> ->
-%		user is asking to login with external id and will be redirected to
-%		openid endpoint	(should output user_ctx anyway?)
-%	/_session?openid=auth-confirm%<openid_protocol> ->
-%		endpoint redirected user back here with authentication response		
-%		if it's ok install a cookie and return user_ctx
-%	/_session ->
-%		if cookie is verified, return json user_ctx
-%		otherwise return Req (or should add user_ctx to the headers?)
-%	any other url ->
-%		Req (or should add user_ctx to the headers?)
-
-%% TODO: add no cache!
 openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->	
+	io:format("OPENID_AUTHENTICATION_HANDLER~n"),
 	{Path, _Query, []} = mochiweb_util:urlsplit_path(MochiReq:get(raw_path)),
 	case Path of  
 		"/_session" ->
 			Params = MochiReq:parse_qs(),
-			io:format("Request ~p~n", [Params]),
+			AuthSession = MochiReq:get_cookie_value("AuthSession"),
+			io:format("Request ~p~n~p~n", [Params, AuthSession]),
 			case proplists:get_value("openid", Params) of								
 				"auth-request" ->
 					handle_openid_auth_request(Req, Params);				
 				"auth-confirm" ->
 					handle_openid_auth_confirm(Req, Params);									
 				undefined ->
-					case verify_openid_cookie(Req) of
-						{ok, UserCtx} ->
-							couch_httpd:send_json(Req, 200, [], UserCtx);
-						_Any ->
-							Req
-					end
+					Req
 			end;
 		_Any ->
 			Req			
 	end.
-	
-user_ctx(ClaimedId) ->
+
+user_ctx(ClaimedId, UserDoc) ->
 	{[
         {ok, true},
     	{name, ?l2b(ClaimedId)},
     	{roles, []},
-    	{user_doc, null}
+		{salt, ?l2b("salt")},
+    	{user_doc, couch_doc:to_json_obj(UserDoc,[])}
 	]}.
-
-verify_openid_cookie(#httpd{mochi_req=MochiReq}=Req) ->
-	case MochiReq:get_cookie_value("OpenidAuthSession") of
-    	undefined -> none;
-    	[] -> none;
-    	Cookie ->
-    		AssocHandle = couch_util:decodeBase64Url(Cookie),
-	    	AssociateDict = get_associate_dict(AssocHandle),
-	    	ClaimedId = eopenid_lib:out("openid.claimed_id", AssociateDict),
-    		{ok, user_ctx(ClaimedId)}
-		end.
 	
 handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
 	io:format("AUTH-REQUEST parms: ~p~n", [Params]),
@@ -81,6 +55,7 @@ handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
 		
 % http://www.dikappa.net:5984/_session?openid=auth-request&openid-identifier=caprazzi.net	
 % http://localhost:5984/_session?openid=auth-request&openid-identifier=caprazzi.net
+
 handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
 	io:format("AUTH-CONFIRM parms: ~p~n", [Params]),
 	case proplists:get_value("openid.assoc_handle", Params) of
@@ -93,10 +68,12 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
 					io:format("Verified ~p~n", [AssociateDict]),
 					% create user
 					OpenId = eopenid_lib:out("openid.claimed_id", AssociateDict),
-					Created = create_or_update_user_doc(OpenId),
-					io:format("Created doc: ~p~n",[Created]),
-					Cookie = cookie_auth(Req, AssocHandle),						
-					couch_httpd:send_json(Req, 200, [Cookie], user_ctx(OpenId));
+					{ok, UserDoc} = get_or_create_user_doc(OpenId),
+					Secret = couch_config:get("couch_httpd_auth", "secret"),
+					FullSecret = ?l2b(Secret ++ "salt"),
+					Rq = Req#httpd{user_ctx=#user_ctx{name=?l2b(OpenId)}, auth={FullSecret, true}}, 
+					Cookie = couch_httpd_auth:cookie_auth_header(Rq, []),
+					couch_httpd:send_json(Rq, 200, Cookie, user_ctx(OpenId, UserDoc));
 				false ->
 					io:format("Not Verified ~p~n", [AssociateDict]),
 					boom
@@ -112,30 +89,49 @@ cache_busting_headers() ->
         {"Pragma", "no-cache"}
 	].
 
-create_or_update_user_doc(OpenId) ->
+get_or_create_user_doc(OpenId) ->
 	DbName = ?l2b(couch_config:get("couch_httpd_auth", "authentication_db")),
 	{ok, Db} = couch_db:open(DbName, [{user_ctx, #user_ctx{roles=[<<"_admin">>]}}]),
-	Doc = create_user_doc(OpenId),
-	couch_db:update_doc(Db, Doc, [full_commit]).
-	
+	case find_user_by_openid(Db, OpenId) of
+		not_found ->
+			%% not found, create 
+			Doc = create_user_doc(OpenId),
+			couch_db:update_doc(Db, Doc, [full_commit]),
+			{ok, Doc};
+		{ok, Doc} ->
+			{ok, Doc}
+	end.
+
+find_user_by_openid(Db, OpenId) ->
+	% DesignId = <<"_design/_openid">>,
+	% ViewName = <<"users_by_openids">>
+	% Stale = nil,
+	% {ok, View, Group}  = couch_view:get_map_view(Db, DesignId, ViewName, nil),
+	%% ... magic happens ... and a user doc is returned
+	%% ... or not
+	% create_user_doc(OpenId).
+	DocId = ?l2b("org.couchdb.user:" ++ OpenId),
+	io:format("find ~p ~p~n", [OpenId, DocId]),
+	case couch_db:open_doc(Db, DocId) of
+		{ok, Doc} ->
+			{ok, Doc};
+		_Else ->
+			not_found
+	end.
+
 create_user_doc(OpenId) ->
 	DocId = ?l2b("org.couchdb.user:" ++ OpenId),
 	couch_doc:from_json_obj({[
 		{<<"_id">>, DocId},
 		{<<"type">>,<<"user">>},
 		{<<"username">>, ?l2b(OpenId)},
+		{<<"salt">>, ?l2b("salt")},
 		{<<"roles">>, []},
 		{<<"openid">>,[?l2b(OpenId)]}
-	]})
-	
-	.
-	
-cookie_auth(#httpd{mochi_req=MochiReq}=Req, AssocHandle) ->	
-	mochiweb_cookies:cookie("OpenidAuthSession", couch_util:encodeBase64Url(AssocHandle), [{path, "/"}, {http_only, true}]).
-		
+	]}).
+			
 openid_v1_redirect(Req, Identifier) ->
 	application:start(eopenid),
-	
 	Conf = eopenid_lib:foldf(
 		[eopenid_lib:in("openid.return_to", couch_httpd:absolute_uri(Req, "/_session?openid=auth-confirm")),
 		eopenid_lib:in("openid.trust_root", couch_httpd:absolute_uri(Req, "/"))
