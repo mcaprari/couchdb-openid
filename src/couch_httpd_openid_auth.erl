@@ -20,7 +20,6 @@ openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->
 	case Path of  
 		"/_session" ->
 			Params = MochiReq:parse_qs(),
-			AuthSession = MochiReq:get_cookie_value("AuthSession"),
 			case proplists:get_value("openid", Params) of								
 				"auth-request" ->
 					handle_openid_auth_request(Req, Params);				
@@ -42,7 +41,7 @@ user_ctx(ClaimedId, UserDoc) ->
     	{user_doc, couch_doc:to_json_obj(UserDoc,[])}
 	]}.
 	
-handle_openid_auth_request(#httpd{mochi_req=MochiReq}=Req, Params) ->
+handle_openid_auth_request(Req, Params) ->
 	case proplists:get_value("openid-identifier", Params) of
 		undefined ->
 			couch_httpd:send_error(Req, 400, [], <<"openid-auth-request">>, <<"with openid=auth-requests MUST provide openid-identifier=identifier">>);
@@ -151,6 +150,6 @@ ets_maybe_new(Table) ->
 	case ets:info(Table) of
 		undefined ->
 			ets:new(Table, [set, named_table]);
-		Info ->
+		_Info ->
 			Table
 	end.
