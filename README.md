@@ -6,6 +6,8 @@ so it is definitely not production ready.
 
 I plan to add support for openid 2.0 and to make couchdb work as openid endpoint.
 
+**The handler code would love to be reviewed by someone with some erlang and couchdb experience**
+
 Quick install:
 --------------
    * cd couchdb_install_path/lib/couchdb/erlang/lib/
@@ -40,6 +42,7 @@ the client is logged in as the mapped user
    * if the client **is logged in** and supplies a **mapped openid**
       * if openid is mapped to the **same user**, the client keeps the current login
       * if openid is mapped to a **different user**, the operation fails 400
+
    * if user **is logged in AS ADMIN** and supplies a **new openid** the operation fails 500
 	
 
