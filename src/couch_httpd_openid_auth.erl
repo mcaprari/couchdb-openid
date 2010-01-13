@@ -20,11 +20,11 @@ openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->
 	case Path of  
 		"/_session" ->
 			Params = MochiReq:parse_qs(),
-			case proplists:get_value("openid", Params) of								
+			case proplists:get_value("openid", Params) of
 				"auth-request" ->
-					handle_openid_auth_request(Req, Params);				
+					handle_openid_auth_request(Req, Params);
 				"auth-confirm" ->
-					handle_openid_auth_confirm(Req, Params);									
+					handle_openid_auth_confirm(Req, Params);
 				undefined ->
 					Req
 			end;
@@ -61,7 +61,9 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
 			case eopenid_v1:verify_signed_keys(MochiReq:get(raw_path), AssociateDict) of
 				true ->
 					OpenId = eopenid_lib:out("openid.claimed_id", AssociateDict),
-					{ok, UserDoc} = get_or_create_user_doc(OpenId),
+					%% TODO: if user is already logged in but this openid is new,
+					%% add this openid and proceed as normal with cookies
+					{ok, UserDoc} = ensure_user_doc_exists(OpenId),
 					Secret = couch_config:get("couch_httpd_auth", "secret"),
 					FullSecret = ?l2b(Secret ++ "salt"),
 					Rq = Req#httpd{user_ctx=#user_ctx{name=?l2b(OpenId)}, auth={FullSecret, true}}, 
@@ -82,12 +84,13 @@ cache_busting_headers() ->
         {"Pragma", "no-cache"}
 	].
 
-get_or_create_user_doc(OpenId) ->
+ensure_user_doc_exists(OpenId) ->
 	DbName = ?l2b(couch_config:get("couch_httpd_auth", "authentication_db")),
-	{ok, Db} = couch_db:open(DbName, [{user_ctx, #user_ctx{roles=[<<"_admin">>]}}]),
-	case find_user_by_openid(Db, OpenId) of
-		not_found ->
-			%% not found, create 
+	{ok, Db} = couch_httpd_auth:ensure_users_db_exists(DbName),
+	DesignId = <<"_design/_openid">>,
+	ok = ensure_openid_ddoc_exists(Db, DesignId),
+	case find_user_by_openid(Db, DesignId, OpenId) of
+		user_not_found ->
 			Doc = create_user_doc(OpenId),
 			couch_db:update_doc(Db, Doc, [full_commit]),
 			{ok, Doc};
@@ -95,21 +98,54 @@ get_or_create_user_doc(OpenId) ->
 			{ok, Doc}
 	end.
 
-find_user_by_openid(Db, OpenId) ->
-	% DesignId = <<"_design/_openid">>,
-	% ViewName = <<"users_by_openids">>
-	% Stale = nil,
-	% {ok, View, Group}  = couch_view:get_map_view(Db, DesignId, ViewName, nil),
-	%% ... magic happens ... and a user doc is returned
-	%% ... or not
-	% create_user_doc(OpenId).
-	DocId = ?l2b("org.couchdb.user:" ++ OpenId),
-	case couch_db:open_doc(Db, DocId) of
-		{ok, Doc} ->
-			{ok, Doc};
-		_Else ->
-			not_found
-	end.
+find_user_by_openid(Db, DesignId, OpenId) ->
+	ViewName = <<"users_by_openid">>,
+	{ok, View, _Group} = couch_view:get_map_view(Db, DesignId, ViewName, _Stale=nil),
+	FoldFun = fun({{_, UserDocId}, _}, _, _) -> {stop, UserDocId} end,
+	Keys = [{start_key, {?l2b(OpenId), ?MIN_STR}},
+			{end_key, {?l2b(OpenId), ?MAX_STR}}],
+	case couch_view:fold(View, FoldFun, {user_not_found}, Keys) of
+		{ok, _, {user_not_found}} ->
+			user_not_found;
+		{ok, _, UserDocId} ->
+			{ok, Doc} = couch_db:open_doc(Db, UserDocId),
+			{ok, Doc}
+    end.
+
+ensure_openid_ddoc_exists(Db, DDocId) -> 
+    try couch_httpd_db:couch_doc_open(Db, DDocId, nil, []) of
+        _Foo ->
+			ok
+    catch 
+        _:_Error -> 
+            % create the design document
+            {ok, AuthDesign} = openid_design_doc(DDocId),
+            {ok, _Rev} = couch_db:update_doc(Db, AuthDesign, []),
+            ok
+    end.
+	
+openid_design_doc(DocId) ->
+	DocProps = [
+        {<<"_id">>, DocId},
+        {<<"language">>,<<"javascript">>},
+		{<<"views">>, {[
+			{<<"users_by_openid">>,
+				{[
+					{
+						<<"map">>,
+						<<"function(doc) {
+						    if (doc.type === 'user' && doc.openid) {
+						        doc.openid.forEach(function(openid) {
+						            emit(openid, doc.username);
+						        });
+						    }
+						}">>
+					}
+				]}
+			}
+		]}}
+	],
+    {ok, couch_doc:from_json_obj({DocProps})}.
 
 create_user_doc(OpenId) ->
 	DocId = ?l2b("org.couchdb.user:" ++ OpenId),
