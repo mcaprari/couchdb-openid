@@ -5,7 +5,7 @@ based on http://github.com/etnt/eopenid
 Quick install:
 --------------
    * cd couchdb_install_path/lib/couchdb/erlang/lib/
-   * git clone http://github.com/mcaprari/eopenid.git
+   * git clone git://github.com/mcaprari/couchdb-openid.git
    * add {couch_httpd_openid_auth, openid_authentication_handler} to local.ini [httpd]/authentication_handlers
   
 Quick test:
@@ -34,6 +34,7 @@ Then it's redirected back to the couch and
 
 TODO:
 ----
+   * try erl_openid for openid 2.0 support
    * decide if it is wise to map openids to admins (if at all possible)
    * cleanup ets table after auth confirm (or maybe find an alternative to ets tables)
    * reduce dependence from eopenid (dict access routines at least)
