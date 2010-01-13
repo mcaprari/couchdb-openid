@@ -2,8 +2,8 @@ This is a draft implementation of OpenID version 1.1 for couchdb,
 based on http://github.com/etnt/eopenid
 
 
-   * if user is not logged in and supplies a new openid, a new user is created with username=openid.
-   * if user is not logged in and supplies a mapped openid, user is logged in.
+   * if user *IS _NOT_ LOGGED* in and supplies a *NEW OPENID*, a new user is created with username=openid.
+   * if user *IS _NOT_ LOGGED* in and supplies a *MAPPED OPENID*, user is logged in with mapped user
    * if user is logged in and supplies a new openid, the openid is added to current user.
    * if user is logged in and supplies an mapped openid
       * if openid is mapped to the same user, nothing much happens
@@ -20,12 +20,8 @@ Quick test:
 http://localhost:5984/_session?openid=auth-request&openid-identifier=<your openid>
 	
 
-
-
 TODO:
 ----
-   * if user is already logged in but this openid is new, add this openid to his user document
-and proceed as normal with cookies
    * randomize salt on user creation
    * cleanup ets table after auth confirm (or maybe find an alternative to ets tables)
    * reduce dependence from eopenid (dict access routines at least)
