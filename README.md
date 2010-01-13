@@ -8,7 +8,8 @@ Quick install:
    * git clone git://github.com/mcaprari/couchdb-openid.git
    * cd couchdb-openid
    * make
-   * add {couch_httpd_openid_auth, openid_authentication_handler} to local.ini [httpd]/authentication_handlers
+   * edit local.ini [httpd]/authentication_handlers (or do it form futon) and
+	add {couch_httpd_openid_auth, openid_authentication_handler} **BEFORE the default handlers**
    * restart couchdb
   
 Quick test:
