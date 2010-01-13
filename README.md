@@ -2,12 +2,13 @@ This is a draft implementation of OpenID version 1.1 for couchdb,
 based on http://github.com/etnt/eopenid
 
 
-   * if user _IS *NOT* LOGGED_ in and supplies a *NEW OPENID*, a new user is created with username=openid.
-   * if user *IS _NOT_ LOGGED* in and supplies a *MAPPED OPENID*, user is logged in with mapped user
-   * if user is logged in and supplies a new openid, the openid is added to current user.
-   * if user is logged in and supplies an mapped openid
+   * if user **is not logged in** in and supplies a **new openid**, a new user is created with username=openid.
+   * if user **is not logged in** in and supplies a **mapped openid**, user is logged in with mapped user
+   * if user **is logged in** and supplies a **new openid**, the openid is added to current user.
+   * if user **is logged in** and supplies a **mapped openid**
       * if openid is mapped to the same user, nothing much happens
       * if openid is mapped to a different user, the operation fails 400
+   * if user **is logged in AS ADMIN** and supplies a **new openid** the operation fails 500
 
 Quick install:
 --------------
