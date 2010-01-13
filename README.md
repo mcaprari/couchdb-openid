@@ -1,6 +1,10 @@
 This is a draft implementation of OpenID version 1.1 for couchdb,
 based on http://github.com/etnt/eopenid
 
+It seems fairly stable but has only been tested against myopenid.com,
+so it is definitely not production ready.
+
+I plan to add support for openid 2.0 and to make couchdb work as openid endpoint.
 
 Quick install:
 --------------
