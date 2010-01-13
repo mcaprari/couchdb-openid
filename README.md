@@ -14,9 +14,12 @@ http://localhost:5984/_session?openid=auth-request&openid-identifier=<your openi
 	
 What to expect:
 ---------------
-When a client hits the initiation url (above), it is redirected to the openid provider
-and prompted to authorise the association. Then it's redirected back to the couch and
+Only openid is supported and it has only been tested with myopenid.com as openid provider.
 
+When a client hits the initiation url (above), it is redirected to the openid provider
+and prompted to authorise the association. 
+
+Then it's redirected back to the couch and
    * if the client **is not logged in** in and supplies a **new openid**,
 	a new user is created with username=openid and the client is logged in
    * if the client **is not logged in** in and supplies a **mapped openid**,
