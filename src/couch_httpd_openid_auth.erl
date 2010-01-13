@@ -10,13 +10,14 @@
 % License for the specific language governing permissions and limitations under
 % the License.
 %
-% Mateo Caprari <matteo.caprari@gmail.com> - Jan 2010
+% Matteo Caprari <matteo.caprari@gmail.com> - Jan 2010
 -module(couch_httpd_openid_auth).
 -include("couch_db.hrl").
 
 -export([openid_authentication_handler/1]).
 
 openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->    
+	io:format("openid-authentication-handler~n"),
     {Path, _Query, []} = mochiweb_util:urlsplit_path(MochiReq:get(raw_path)),
     case Path of  
         "/_session" ->
@@ -34,7 +35,9 @@ openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->
 handle_openid_auth_request(Req, Params) ->
     case proplists:get_value("openid-identifier", Params) of
         undefined ->
-            couch_httpd:send_error(Req, 400, [], <<"openid-auth-request">>, <<"with openid=auth-requests MUST provide openid-identifier=identifier">>);
+            couch_httpd:send_error(Req, 400, [],
+				<<"openid-auth-request">>,
+				<<"with openid=auth-requests MUST provide openid-identifier=identifier">>);
         Identifier ->
             openid_v1_redirect(Req, Identifier)
     end.
@@ -42,22 +45,27 @@ handle_openid_auth_request(Req, Params) ->
 handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
     case proplists:get_value("openid.assoc_handle", Params) of
         undefined ->
-            couch_httpd:send_error(Req, 400, [], <<"openid-auth-confirm">>, <<"with openid=auth-confirm MUST provide openid.assoc_handle">>);
+            couch_httpd:send_error(Req, 400, [],
+				<<"openid-auth-confirm">>,
+				<<"with openid=auth-confirm MUST provide openid.assoc_handle">>);
         AssocHandle ->
             AssociateDict = get_associate_dict(AssocHandle),
             case eopenid_v1:verify_signed_keys(MochiReq:get(raw_path), AssociateDict) of
+				false ->
+                    couch_httpd:send_error(Req, 400,
+						<<"openid-auth-confirm">>, 
+						<<"signed keys not verified">>);
                 true ->
                     OpenId = eopenid_lib:out("openid.claimed_id", AssociateDict),
                     {ok, UserDoc} = ensure_user_doc_exists(OpenId),
                     Secret = ?l2b(couch_config:get("couch_httpd_auth", "secret")),
-					UserSalt = proplists:get_value(<<"salt">>, (UserDoc)#doc.body, <<"">>),
+					{UserProps} = (UserDoc)#doc.body,
+					UserSalt = proplists:get_value(<<"salt">>, UserProps, <<"">>),
+					Username = proplists:get_value(<<"username">>, UserProps),
 					couch_httpd_auth:handle_session_req(Req#httpd{
-						user_ctx=#user_ctx{name=?l2b(OpenId)},
+						user_ctx=#user_ctx{name=Username},
 						auth={<<Secret/binary, UserSalt/binary>>, true}}
-					);
-                false ->
-                    io:format("Not Verified ~p~n", [AssociateDict]),
-                    boom
+					)
             end
     end.
 
@@ -81,7 +89,17 @@ ensure_user_doc_exists(OpenId) ->
             couch_db:update_doc(Db, Doc, [full_commit]),
             {ok, Doc};
         {ok, Doc} ->
-            {ok, Doc}
+			{UserProps} = (Doc)#doc.body,
+			MappedIds = proplists:get_value(<<"openid">>, UserProps),
+			case lists:any(fun(El) -> El == ?l2b(OpenId) end, MappedIds) of
+				true ->
+					{ok, Doc};
+				false ->
+					P = proplists:delete(<<"openid">>, UserProps) ++ [?l2b(OpenId)],
+					{ok, Updated} = couch_db:update_doc(Db, Doc#doc{body=P}, [full_commit]),
+					io:format("Updated: ~p~n", [Updated]),
+					{ok, Updated}
+			end
     end.
 
 find_user_by_openid(Db, DesignId, OpenId) ->
