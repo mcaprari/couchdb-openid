@@ -17,7 +17,6 @@
 -export([openid_authentication_handler/1]).
 
 openid_authentication_handler(#httpd{mochi_req=MochiReq}=Req) ->    
-	io:format("openid-authentication-handler~n"),
     {Path, _Query, []} = mochiweb_util:urlsplit_path(MochiReq:get(raw_path)),
     case Path of  
         "/_session" ->
@@ -36,8 +35,8 @@ handle_openid_auth_request(Req, Params) ->
     case proplists:get_value("openid-identifier", Params) of
         undefined ->
             couch_httpd:send_error(Req, 400, [],
-				<<"openid-auth-request">>,
-				<<"with openid=auth-requests MUST provide openid-identifier=identifier">>);
+                <<"openid-auth-request">>,
+                <<"with openid=auth-requests MUST provide openid-identifier=identifier">>);
         Identifier ->
             openid_v1_redirect(Req, Identifier)
     end.
@@ -45,30 +44,80 @@ handle_openid_auth_request(Req, Params) ->
 handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
     case proplists:get_value("openid.assoc_handle", Params) of
         undefined ->
-            couch_httpd:send_error(Req, 400, [],
-				<<"openid-auth-confirm">>,
-				<<"with openid=auth-confirm MUST provide openid.assoc_handle">>);
+            error(Req, <<"openid=auth-confirm REQUIRES openid.assoc_handle">>);
         AssocHandle ->
             AssociateDict = get_associate_dict(AssocHandle),
             case eopenid_v1:verify_signed_keys(MochiReq:get(raw_path), AssociateDict) of
-				false ->
-                    couch_httpd:send_error(Req, 400,
-						<<"openid-auth-confirm">>, 
-						<<"signed keys not verified">>);
-                true ->
-                    OpenId = eopenid_lib:out("openid.claimed_id", AssociateDict),
-                    {ok, UserDoc} = ensure_user_doc_exists(OpenId),
-                    Secret = ?l2b(couch_config:get("couch_httpd_auth", "secret")),
-					{UserProps} = (UserDoc)#doc.body,
-					UserSalt = proplists:get_value(<<"salt">>, UserProps, <<"">>),
-					Username = proplists:get_value(<<"username">>, UserProps),
-					couch_httpd_auth:handle_session_req(Req#httpd{
-						user_ctx=#user_ctx{name=Username},
-						auth={<<Secret/binary, UserSalt/binary>>, true}}
-					)
+                false ->
+                    error(Req, <<"signed keys not verified">>);
+                true ->                 
+                    DbName = ?l2b(couch_config:get("couch_httpd_auth", "authentication_db")),
+                    DesignId = <<"_design/_openid">>,
+                    {ok, Db} = couch_httpd_auth:ensure_users_db_exists(DbName),
+                    ok = ensure_openid_ddoc_exists(Db, DesignId),
+                    ClaimedId = eopenid_lib:out("openid.claimed_id", AssociateDict),
+                    CurrentUser = current_user(Db,Req),
+                    MappedUser = mapped_user(Db, DesignId, ClaimedId),
+                    case {CurrentUser, MappedUser} of 
+                        {not_logged_in, openid_not_mapped} ->
+                            {ok, UserDoc} = create_new_mapped_user(Db, ClaimedId),
+                            success(Req, UserDoc);
+                            
+                        {{ok, CurrentUser}, openid_not_mapped} ->
+                            {ok, UserDoc} = map_openid_to_existing_user(Db, CurrentUser, ClaimedId),
+                            success(Req, UserDoc);
+                            
+                        {not_logged_in, {ok, MappedUser}} ->
+                            success(Req, MappedUser);
+                            
+                        {{ok, CurrentUser}, {ok, MappedUser}} ->
+                            case CurrentUser#doc.id == MappedUser#doc.id of
+                                true ->
+                                    success(Req, CurrentUser);
+                                false ->
+                                    error(Req, <<"openid is mapped to different user">>)
+                            end
+                    end
             end
+    end.    
+
+success(Req, UserDoc) ->
+    Secret = ?l2b(couch_config:get("couch_httpd_auth", "secret")),
+    {UserProps} = (UserDoc)#doc.body,
+    UserSalt = proplists:get_value(<<"salt">>, UserProps, <<"">>),
+    Username = proplists:get_value(<<"username">>, UserProps),
+    couch_httpd_auth:handle_session_req(Req#httpd{
+        user_ctx=#user_ctx{name=Username},
+        auth={<<Secret/binary, UserSalt/binary>>, true}}
+    ).
+    
+error(Req, Message) ->
+    couch_httpd:send_error(Req, 400, ?MODULE, Message).
+
+current_user(Db, Req) ->
+    Rt = couch_httpd_auth:cookie_authentication_handler(Req),
+    case Rt#httpd.user_ctx of
+        undefined ->
+            not_logged_in;
+        #user_ctx{name=Username} ->
+            %% admin won't be found this way !!!
+            {ok, UserDoc} = couch_db:open_doc(Db, <<"org.couchdb.user:", Username/binary>>),
+            {ok, UserDoc}
     end.
 
+mapped_user(Db, DesignId, OpenId) ->
+    ViewName = <<"users_by_openid">>,
+    {ok, View, _Group} = couch_view:get_map_view(Db, DesignId, ViewName, _Stale=nil),
+    FoldFun = fun({{_, UserDocId}, _}, _, _) -> {stop, UserDocId} end,
+    Keys = [{start_key, {?l2b(OpenId), ?MIN_STR}},
+            {end_key, {?l2b(OpenId), ?MAX_STR}}],
+    case couch_view:fold(View, FoldFun, {user_not_found}, Keys) of
+        {ok, _, {user_not_found}} ->
+            openid_not_mapped;
+        {ok, _, UserDocId} ->
+            {ok, Doc} = couch_db:open_doc(Db, UserDocId),
+            {ok, Doc}
+    end.
 cache_busting_headers() ->
     [
         {"Date", httpd_util:rfc1123_date()},
@@ -78,42 +127,29 @@ cache_busting_headers() ->
         {"Pragma", "no-cache"}
     ].
 
-ensure_user_doc_exists(OpenId) ->
-    DbName = ?l2b(couch_config:get("couch_httpd_auth", "authentication_db")),
-    {ok, Db} = couch_httpd_auth:ensure_users_db_exists(DbName),
-    DesignId = <<"_design/_openid">>,
-    ok = ensure_openid_ddoc_exists(Db, DesignId),
-    case find_user_by_openid(Db, DesignId, OpenId) of
-        user_not_found ->
-            Doc = create_user_doc(OpenId),
-            couch_db:update_doc(Db, Doc, [full_commit]),
-            {ok, Doc};
-        {ok, Doc} ->
-			{UserProps} = (Doc)#doc.body,
-			MappedIds = proplists:get_value(<<"openid">>, UserProps),
-			case lists:any(fun(El) -> El == ?l2b(OpenId) end, MappedIds) of
-				true ->
-					{ok, Doc};
-				false ->
-					P = proplists:delete(<<"openid">>, UserProps) ++ [?l2b(OpenId)],
-					{ok, Updated} = couch_db:update_doc(Db, Doc#doc{body=P}, [full_commit]),
-					io:format("Updated: ~p~n", [Updated]),
-					{ok, Updated}
-			end
-    end.
+%% TODO: should generate base user using a couchdb core routine
+create_new_mapped_user(Db, OpenId) ->
+    DocId = ?l2b("org.couchdb.user:" ++ OpenId),
+    {ok, _Mapped} = couch_db:update_doc(Db, couch_doc:from_json_obj({[
+        {<<"_id">>, DocId},
+        {<<"type">>,<<"user">>},
+        {<<"username">>, ?l2b(OpenId)},
+        {<<"salt">>, ?l2b("salt")},
+        {<<"roles">>, []},
+        {<<"openid">>,[?l2b(OpenId)]}
+    ]}), [full_commit]).
 
-find_user_by_openid(Db, DesignId, OpenId) ->
-    ViewName = <<"users_by_openid">>,
-    {ok, View, _Group} = couch_view:get_map_view(Db, DesignId, ViewName, _Stale=nil),
-    FoldFun = fun({{_, UserDocId}, _}, _, _) -> {stop, UserDocId} end,
-    Keys = [{start_key, {?l2b(OpenId), ?MIN_STR}},
-            {end_key, {?l2b(OpenId), ?MAX_STR}}],
-    case couch_view:fold(View, FoldFun, {user_not_found}, Keys) of
-        {ok, _, {user_not_found}} ->
-            user_not_found;
-        {ok, _, UserDocId} ->
-            {ok, Doc} = couch_db:open_doc(Db, UserDocId),
-            {ok, Doc}
+map_openid_to_existing_user(Db, UserDoc, OpenId) ->
+    {UserProps} = (UserDoc)#doc.body,
+    MappedIds = proplists:get_value(<<"openid">>, UserProps),
+    case lists:any(fun(El) -> El == ?l2b(OpenId) end, MappedIds) of
+        true ->
+            {ok, UserDoc};
+        false ->
+            %% TODO: this is really ugly
+            P = proplists:delete(<<"openid">>, UserProps) ++ [{<<"openid">>, MappedIds ++ [?l2b(OpenId)]}],
+            {ok, _Updated} = couch_db:update_doc(Db, UserDoc#doc{body={P}}, [full_commit]),
+            {ok, _Doc} = couch_db:open_doc(Db, UserDoc#doc.id)
     end.
 
 ensure_openid_ddoc_exists(Db, DDocId) -> 
@@ -151,17 +187,6 @@ openid_design_doc(DocId) ->
     ],
     {ok, couch_doc:from_json_obj({DocProps})}.
 
-create_user_doc(OpenId) ->
-    DocId = ?l2b("org.couchdb.user:" ++ OpenId),
-    couch_doc:from_json_obj({[
-        {<<"_id">>, DocId},
-        {<<"type">>,<<"user">>},
-        {<<"username">>, ?l2b(OpenId)},
-        {<<"salt">>, ?l2b("salt")},
-        {<<"roles">>, []},
-        {<<"openid">>,[?l2b(OpenId)]}
-    ]}).
-            
 openid_v1_redirect(Req, Identifier) ->
     application:start(eopenid),
     Conf = eopenid_lib:foldf(

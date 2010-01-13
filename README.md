@@ -15,7 +15,7 @@ TODO:
 ----
    * if user is already logged in but this openid is new, add this openid to his user document
 and proceed as normal with cookies
-   * user creation should make full use of code in couch_httpd_auth
+   * randomize salt on user creation
    * cleanup ets table after auth confirm (or maybe find an alternative to ets tables)
    * reduce dependence from eopenid (dict access routines at least)
    
