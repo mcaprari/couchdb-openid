@@ -18,7 +18,7 @@ http://localhost:5984/_session?openid=auth-request&openid-identifier=<your openi
 	
 What to expect:
 ---------------
-Only openid is supported and it has only been tested with myopenid.com as openid provider.
+Only openid 1.1 is supported and it has only been tested with myopenid.com as openid provider.
 
 When a client hits the initiation url (above), it is redirected to the openid provider
 and prompted to authorise the association. 
