@@ -28,9 +28,12 @@ When a client hits the initiation url (above), it is redirected to the openid pr
 and prompted to authorise the association. 
 
 Then it's redirected back to the couch and
-   * if the client **is not logged in** in and supplies a **new openid**, a new user is created with username=openid and the client is logged in
+   * if the client **is not logged in** in and supplies a **new openid**,
+a new user is created with username=openid and the client is logged in
+
    * if the client **is not logged in** in and supplies a **mapped openid**,
-   the client is logged in as the mapped user
+the client is logged in as the mapped user
+
    * if the client **is logged in** and supplies a **new openid**,
 	the supplied openid is added to current user, and the client keeps the current login
    * if the client **is logged in** and supplies a **mapped openid**
