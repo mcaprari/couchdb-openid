@@ -132,14 +132,19 @@ cache_busting_headers() ->
 %% TODO: should generate base user using a couchdb core routine
 create_new_mapped_user(Db, OpenId) ->
     DocId = ?l2b("org.couchdb.user:" ++ OpenId),
-    {ok, _Mapped} = couch_db:update_doc(Db, couch_doc:from_json_obj({[
-        {<<"_id">>, DocId},
-        {<<"type">>,<<"user">>},
-        {<<"username">>, ?l2b(OpenId)},
-        {<<"salt">>, couch_uuids:random()},
-        {<<"roles">>, []},
-        {<<"openid">>,[?l2b(OpenId)]}
-    ]}), [full_commit]).
+	UserDoc = #doc{
+		id = DocId,
+		body = {[
+	        {<<"_id">>, DocId},
+	        {<<"type">>,<<"user">>},
+	        {<<"username">>, ?l2b(OpenId)},
+	        {<<"salt">>, couch_uuids:random()},
+	        {<<"roles">>, []},
+	        {<<"openid">>,[?l2b(OpenId)]}
+	    ]}
+	},
+    {ok, {_N, _Hash}} = couch_db:update_doc(Db, UserDoc, [full_commit]),
+	{ok, UserDoc}.
 
 map_openid_to_existing_user(Db, UserDoc, OpenId) ->
     {UserProps} = (UserDoc)#doc.body,
