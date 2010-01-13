@@ -6,6 +6,8 @@ Quick install:
 --------------
    * cd couchdb_install_path/lib/couchdb/erlang/lib/
    * git clone git://github.com/mcaprari/couchdb-openid.git
+   * cd couchdb-openid
+   * make
    * add {couch_httpd_openid_auth, openid_authentication_handler} to local.ini [httpd]/authentication_handlers
    * restart couchdb
   

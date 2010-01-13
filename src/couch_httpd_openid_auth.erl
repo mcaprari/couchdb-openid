@@ -63,20 +63,22 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
                             {ok, UserDoc} = create_new_mapped_user(Db, ClaimedId),
                             success(Req, UserDoc);
                             
-                        {{ok, CurrentUser}, openid_not_mapped} ->
-                            {ok, UserDoc} = map_openid_to_existing_user(Db, CurrentUser, ClaimedId),
+                        {{ok, UserDoc}, openid_not_mapped} ->
+                            {ok, Updated} = map_openid_to_existing_user(Db, UserDoc, ClaimedId),
+                            success(Req, Updated);
+                            
+                        {not_logged_in, {ok, UserDoc}} ->
                             success(Req, UserDoc);
                             
-                        {not_logged_in, {ok, MappedUser}} ->
-                            success(Req, MappedUser);
-                            
-                        {{ok, CurrentUser}, {ok, MappedUser}} ->
-                            case CurrentUser#doc.id == MappedUser#doc.id of
+                        {{ok, CurrentUserDoc}, {ok, MappedUserDoc}} ->
+                            case CurrentUserDoc#doc.id == MappedUserDoc#doc.id of
                                 true ->
-                                    success(Req, CurrentUser);
+                                    success(Req, CurrentUserDoc);
                                 false ->
                                     error(Req, <<"openid is mapped to different user">>)
-                            end
+                            end;
+							Else ->
+								io:format("Else: ~p~n",[Else])
                     end
             end
     end.    
