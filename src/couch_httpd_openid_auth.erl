@@ -134,7 +134,7 @@ create_new_mapped_user(Db, OpenId) ->
         {<<"_id">>, DocId},
         {<<"type">>,<<"user">>},
         {<<"username">>, ?l2b(OpenId)},
-        {<<"salt">>, ?l2b("salt")},
+        {<<"salt">>, couch_uuids:random()},
         {<<"roles">>, []},
         {<<"openid">>,[?l2b(OpenId)]}
     ]}), [full_commit]).
