@@ -1,6 +1,14 @@
 This is a draft implementation of OpenID version 1.1 for couchdb,
 based on http://github.com/etnt/eopenid
 
+
+   * if user is not logged in and supplies a new openid, a new user is created with username=openid.
+   * if user is not logged in and supplies a mapped openid, user is logged in.
+   * if user is logged in and supplies a new openid, the openid is added to current user.
+   * if user is logged in and supplies an mapped openid
+      * if openid is mapped to the same user, nothing much happens
+      * if openid is mapped to a different user, the operation fails 400
+
 Quick install:
 --------------
    * cd couchdb_install_path/lib/couchdb/erlang/lib/
@@ -10,6 +18,9 @@ Quick install:
 Quick test:
 ----------
 http://localhost:5984/_session?openid=auth-request&openid-identifier=<your openid>
+	
+
+
 
 TODO:
 ----
