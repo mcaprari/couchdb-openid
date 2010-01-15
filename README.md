@@ -8,6 +8,10 @@ I plan to add support for openid 2.0 and to make couchdb work as openid endpoint
 
 **The handler code would love to be reviewed by someone with some erlang and couchdb experience**
 
+Demo:
+-----
+Try the [login page at fortytwo](http://couch.caprazzi.net/fortytwo/_design/fortytwo/_show/auth).
+
 Quick install:
 --------------
    * cd couchdb_install_path/lib/couchdb/erlang/lib/
@@ -21,7 +25,10 @@ Quick install:
 Quick test:
 ----------
 http://localhost:5984/_session?openid=auth-request&openid-identifier=<your openid>
-	
+
+- optionally add the parameter app-return-address=[an_address_of_your_choice] to be redirected there
+when authentication is complete  
+
 What to expect:
 ---------------
 Only openid 1.1 is supported and it has only been tested with myopenid.com as openid provider.
