@@ -46,7 +46,7 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
         undefined ->
             error(Req, <<"openid=auth-confirm REQUIRES openid.assoc_handle">>);
         AssocHandle ->
-            AssociateDict = get_associate_dict(AssocHandle),
+            {AssociateDict, Redirect} = get_associate_dict(AssocHandle),
             case eopenid_v1:verify_signed_keys(MochiReq:get(raw_path), AssociateDict) of
                 false ->
                     error(Req, <<"signed keys not verified">>);
@@ -61,19 +61,19 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
                     case {CurrentUser, MappedUser} of 
                         {not_logged_in, openid_not_mapped} ->
                             {ok, UserDoc} = create_new_mapped_user(Db, ClaimedId),
-                            success(Req, UserDoc);
+                            success(Req, Redirect, UserDoc);
                             
                         {{ok, UserDoc}, openid_not_mapped} ->
                             {ok, Updated} = map_openid_to_existing_user(Db, UserDoc, ClaimedId),
-                            success(Req, Updated);
+                            success(Req, Redirect, Updated);
                             
                         {not_logged_in, {ok, UserDoc}} ->
-                            success(Req, UserDoc);
+                            success(Req, Redirect, UserDoc);
                             
                         {{ok, CurrentUserDoc}, {ok, MappedUserDoc}} ->
                             case CurrentUserDoc#doc.id == MappedUserDoc#doc.id of
                                 true ->
-                                    success(Req, CurrentUserDoc);
+                                    success(Req, Redirect, CurrentUserDoc);
                                 false ->
                                     error(Req, <<"openid is mapped to different user">>)
                             end;
@@ -83,16 +83,24 @@ handle_openid_auth_confirm(#httpd{mochi_req=MochiReq}=Req, Params) ->
             end
     end.    
 
-success(Req, UserDoc) ->
+success(Req, Redirect, UserDoc) ->
     Secret = ?l2b(couch_config:get("couch_httpd_auth", "secret")),
     {UserProps} = (UserDoc)#doc.body,
     UserSalt = proplists:get_value(<<"salt">>, UserProps, <<"">>),
     Username = proplists:get_value(<<"username">>, UserProps),
-    couch_httpd_auth:handle_session_req(Req#httpd{
-        user_ctx=#user_ctx{name=Username},
-        auth={<<Secret/binary, UserSalt/binary>>, true}}
-    ).
-    
+	case Redirect of
+		undefined ->
+			couch_httpd_auth:handle_session_req(Req#httpd{
+		        user_ctx=#user_ctx{name=Username},
+		        auth={<<Secret/binary, UserSalt/binary>>, true}}
+		    );
+		Url ->
+			Headers = [{"Location", Url}] ++ cache_busting_headers(),
+		    couch_httpd:send_response(Req#httpd{
+		        user_ctx=#user_ctx{name=Username},
+		        auth={<<Secret/binary, UserSalt/binary>>, true}}, 301, Headers ++ cache_busting_headers(), <<>>)
+	end.
+
 error(Req, Message) ->
     couch_httpd:send_error(Req, 400, ?MODULE, Message).
 
@@ -103,8 +111,7 @@ current_user(Db, Req) ->
             not_logged_in;
         #user_ctx{name=Username} ->
             %% admin won't be found this way !!!
-            {ok, UserDoc} = couch_db:open_doc(Db, <<"org.couchdb.user:", Username/binary>>),
-            {ok, UserDoc}
+            {ok, _UserDoc} = couch_db:open_doc(Db, <<"org.couchdb.user:", Username/binary>>)
     end.
 
 mapped_user(Db, DesignId, OpenId) ->
@@ -194,7 +201,7 @@ openid_design_doc(DocId) ->
     ],
     {ok, couch_doc:from_json_obj({DocProps})}.
 
-openid_v1_redirect(Req, Identifier) ->
+openid_v1_redirect(#httpd{mochi_req=MochiReq}=Req, Identifier) ->
     application:start(eopenid),
     Conf = eopenid_lib:foldf(
         [eopenid_lib:in("openid.return_to", couch_httpd:absolute_uri(Req, "/_session?openid=auth-confirm")),
@@ -203,14 +210,14 @@ openid_v1_redirect(Req, Identifier) ->
     {ok, Discover} = eopenid_v1:discover(Identifier, Conf),
     {ok, Associate} = eopenid_v1:associate(Discover),
     {ok, Url} = eopenid_v1:checkid_setup(Associate),
-    ok = store_associate_dict(Associate),
+    ok = store_associate_dict({Associate, proplists:get_value("app-return-address", MochiReq:parse_qs())}),
     Headers = [{"Location", Url}] ++ cache_busting_headers(),
     couch_httpd:send_response(Req, 301, Headers, <<>>).
 
-store_associate_dict(Associate) ->
+store_associate_dict({Associate, Redirect}) ->
     Handle = proplists:get_value("openid.assoc_handle", Associate),
     true = ets:insert(ets_maybe_new(openid_associations),
-        {{assoc_handle, Handle}, Associate}),
+        {{assoc_handle, Handle}, {Associate, Redirect}}),
     ok.
 
 get_associate_dict(AssocHandle) ->
