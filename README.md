@@ -60,3 +60,6 @@ TODO:
    * cleanup ets table after auth confirm (or maybe find an alternative to ets tables)
    * reduce dependence from eopenid (dict access routines at least)
    
+
+[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/mcaprari/couchdb-openid/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
+
